@@ -1,1 +1,5 @@
 ﻿Dataset/
+venv/
+__pycache__/
+.idea/
+API_key.txt
