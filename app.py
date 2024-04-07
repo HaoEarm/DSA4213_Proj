@@ -10,7 +10,7 @@ except:
     raise Exception("Please follow the setup and place your API key in ./API_key.txt")
 
 
-@app("/chat")
+@app("/")
 async def serve(q: Q):
     """
     Main Function to boot the app
