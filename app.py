@@ -1,6 +1,7 @@
 from h2o_wave import app, Q, ui, on, data, main, copy_expando, run_on
 from h2ogpte import H2OGPTE
 
+import pandas as pd
 
 H2OGPTE_URL="https://h2ogpte.genai.h2o.ai"
 try:  # Read API key from local dir
@@ -9,6 +10,16 @@ try:  # Read API key from local dir
 except:
     raise Exception("Please follow the setup and place your API key in ./API_key.txt")
 
+# functions
+def get_genres():
+    df = pd.read_json('IMDB_movie_details.json', lines=True)
+    genres = list(df['genre'].explode().sort_values().unique())
+    return genres
+
+def get_movies():
+    df_movie = pd.read_csv('movies_with_genres.csv')
+    movies = list(df_movie['movie_title'].unique())
+    return movies
 
 @app("/")
 async def serve(q: Q):
@@ -81,7 +92,7 @@ async def init(q: Q):
             ui.text('Indicate the movie genres you prefer'),
             ui.checklist(
                 name='genres',
-                choices=[ui.choice(name=str(x), label=str(x)) for x in q.client.all_genres],
+                choices=[ui.choice(name=str(x), label=str(x)) for x in get_genres()],
             ),
             ui.button(name='submit', label='Generate Recommendations!', primary=True),
         ]
@@ -113,9 +124,9 @@ async def init(q: Q):
 
 def init_data(q: Q):
     # TODO: load actual Movie Dataset and genre list
-    q.client.all_movies = ["Toy Story (1995)", "Jumanji (1995)", "Grumpier Old Men (1995)"]
-    q.client.all_genres = ["Adventure", "Action", "Comedy", "Drama", "Romance", "Fantasy", "War", "Children", "Animation"]
-    q.client.all_genres = sorted(q.client.all_genres)   # Alphabetical order
+    q.client.all_movies = get_movies() # ["Toy Story (1995)", "Jumanji (1995)", "Grumpier Old Men (1995)"]
+    q.client.all_genres = get_genres() # ["Adventure", "Action", "Comedy", "Drama", "Romance", "Fantasy", "War", "Children", "Animation"]
+    # q.client.all_genres = sorted(q.client.all_genres)   # Alphabetical order
 
 
 def query_llm(q: Q):  # TODO: Should query both using genre and movie history. Need some prompt engineering
@@ -124,9 +135,9 @@ def query_llm(q: Q):  # TODO: Should query both using genre and movie history. N
 
     genres = q.args.genres  # list of genres selected by user in the 'genres' checklist
     if genres:
-        msg = f"Recommend me a movie that has some of the following genres: {', '.join(genres)}."  # Prompt sent to LLM
+        msg = f"Recommend me at most 5 movies that has some of the following genres: {', '.join(genres)}."  # Prompt sent to LLM
     else:
-        msg = "Recommend me some good movies."
+        msg = "Recommend me at most 5 good movies."
 
     reply = None
     while not reply:
