@@ -94,7 +94,7 @@ async def init(q: Q):
                 name='genres',
                 choices=[ui.choice(name=str(x), label=str(x)) for x in get_genres()],
             ),
-            ui.button(name='submit', label='Generate Recommendations!', primary=True),
+            # ui.button(name='submit', label='Generate Recommendations!', primary=True),
         ]
     )
 
@@ -107,7 +107,7 @@ async def init(q: Q):
                 name='movies',
                 choices=[ui.choice(name=str(x), label=str(x)) for x in q.client.all_movies],
             ),
-            ui.button(name='submit', label='Generate Recommendations!', primary=True),  # Probably should just have 1 button in the whole page
+            # ui.button(name='submit', label='Generate Recommendations!', primary=True),  # Probably should just have 1 button in the whole page
         ]
     )
 
@@ -116,6 +116,7 @@ async def init(q: Q):
         items=[
             ui.separator('Movie Recommended by LLM'),
             ui.text(""),  # Init to empty
+            ui.button(name='submit', label='Generate Recommendations!', primary=True),  # Probably should just have 1 button in the whole page
         ]
     )
 
@@ -130,18 +131,27 @@ def init_data(q: Q):
 
 
 def query_llm(q: Q):  # TODO: Should query both using genre and movie history. Need some prompt engineering
+
     if not q.args.submit:  # Only runs when user pressed the submit button
         return
 
     genres = q.args.genres  # list of genres selected by user in the 'genres' checklist
-    if genres:
-        msg = f"Recommend me at most 5 movies that has some of the following genres: {', '.join(genres)}."  # Prompt sent to LLM
+    movies = q.args.movies  
+    
+    if genres and movies:
+        msg = f"I have enjoyed the following genres: {', '.join(genres)} and watched the following movies: {', '.join(movies)}. Please recommend me at most 5 good movies based on my taste."  # Prompt sent to LLM
+    elif genres:
+        msg = f"I have enjoyed the following genres:{', '.join(genres)}, please recommend me at most 5 good movies of the similar genres."
+    elif movies:
+        msg = f"I have watched the following movies:{', '.join(movies)}, please recommend me at most 5 similar good movies."
+    elif not genres and not movies:
+        msg = "Please recommend me 5 movies based on the trend."
     else:
-        msg = "Recommend me at most 5 good movies."
+        msg = "Please check your input"
 
     reply = None
     while not reply:
-        try:  # Unstable. API doesn't receive the prompt sometimes so need to retry
+        try:  # Unstable. API d1oesn't receive the prompt sometimes so need to retry
             # Create a chat session
             client = H2OGPTE(address=H2OGPTE_URL, api_key=H2OGPTE_API_TOKEN)
             chat_session_id = client.create_chat_session_on_default_collection()
