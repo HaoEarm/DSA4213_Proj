@@ -124,34 +124,35 @@ async def init(q: Q):
 
 
 def init_data(q: Q):
-    # TODO: load actual Movie Dataset and genre list
-    q.client.all_movies = get_movies() # ["Toy Story (1995)", "Jumanji (1995)", "Grumpier Old Men (1995)"]
-    q.client.all_genres = get_genres() # ["Adventure", "Action", "Comedy", "Drama", "Romance", "Fantasy", "War", "Children", "Animation"]
-    # q.client.all_genres = sorted(q.client.all_genres)   # Alphabetical order
+    q.client.all_movies = get_movies()
+    q.client.all_genres = get_genres()
 
 
 def query_llm(q: Q):  # TODO: Should query both using genre and movie history. Need some prompt engineering
-
-    if not q.args.submit:  # Only runs when user pressed the submit button
+    if not q.args.submit:  # Only runs when user presses the submit button
         return
 
-    genres = q.args.genres  # list of genres selected by user in the 'genres' checklist
-    movies = q.args.movies  
-    
-    if genres and movies:
-        msg = f"I have enjoyed the following genres: {', '.join(genres)} and watched the following movies: {', '.join(movies)}. Please recommend me at most 5 good movies based on my taste."  # Prompt sent to LLM
-    elif genres:
-        msg = f"I have enjoyed the following genres:{', '.join(genres)}, please recommend me at most 5 good movies of the similar genres."
-    elif movies:
-        msg = f"I have watched the following movies:{', '.join(movies)}, please recommend me at most 5 similar good movies."
-    elif not genres and not movies:
-        msg = "Please recommend me 5 movies based on the trend."
+    # q.args.xxx is not persistent. Only has value on change.
+    # Create and use q.client.xxx to make it persistent
+    if q.args.genres:  # Not None means there's an update
+        q.client.genres = q.args.genres  # list of genres selected by user in the 'genres' checklist
+    if q.args.movies:  # Not None means there's an update
+        q.client.movies = q.args.movies
+
+    if q.client.genres and q.client.movies:
+        msg = f"I have enjoyed the following genres: {', '.join(q.client.genres)} and watched the following movies: {', '.join(q.client.movies)}. Please recommend me at most 5 good movies based on my taste."  # Prompt sent to LLM
+    elif q.client.genres:
+        msg = f"I have enjoyed the following genres:{', '.join(q.client.genres)}, please recommend me at most 5 good movies of the similar genres."
+    elif q.client.movies:
+        msg = f"I have watched the following movies:{', '.join(q.client.movies)}, please recommend me at most 5 similar good movies."
+    elif not q.client.genres and not q.client.movies:
+        msg = "Please recommend me 5 movies."
     else:
         msg = "Please check your input"
 
     reply = None
     while not reply:
-        try:  # Unstable. API d1oesn't receive the prompt sometimes so need to retry
+        try:  # Unstable. API doesn't receive the prompt sometimes so need to retry
             # Create a chat session
             client = H2OGPTE(address=H2OGPTE_URL, api_key=H2OGPTE_API_TOKEN)
             chat_session_id = client.create_chat_session_on_default_collection()
@@ -160,7 +161,7 @@ def query_llm(q: Q):  # TODO: Should query both using genre and movie history. N
                 print(msg)
                 reply = session.query(
                     message=msg,
-                    timeout=20,  # Might need adjustment
+                    timeout=30,  # Might need adjustment
                 )
         except:
             continue
