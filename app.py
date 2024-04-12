@@ -134,9 +134,9 @@ def query_llm(q: Q):  # TODO: Should query both using genre and movie history. N
 
     # q.args.xxx is not persistent. Only has value on change.
     # Create and use q.client.xxx to make it persistent
-    if q.args.genres:  # Not None means there's an update
+    if q.args.genres is not None:  # Not None means there's an update
         q.client.genres = q.args.genres  # list of genres selected by user in the 'genres' checklist
-    if q.args.movies:  # Not None means there's an update
+    if q.args.movies is not None:  # Not None means there's an update
         q.client.movies = q.args.movies
 
     if q.client.genres and q.client.movies:
