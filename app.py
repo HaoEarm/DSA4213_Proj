@@ -38,6 +38,7 @@ async def serve(q: Q):
         meta.theme = q.client.theme = 'h2o-dark' if q.client.theme == 'default' else 'default'
 
     query_llm(q)  # Generate Movie Recommendations
+    update_recommendations(q)  # Update display of recommendations
     await q.page.save()
 
 
@@ -55,7 +56,7 @@ async def init(q: Q):
                     ui.zone('movie_history', size='300px'),
                     ui.zone('right-pane', direction=ui.ZoneDirection.COLUMN, zones=[
                         # ui.zone('trending', size='600px'),
-                        ui.zone('llm_response'),
+                        ui.zone('movie_recommendations'),
                     ]),
                 ]),
             ]
@@ -68,7 +69,7 @@ async def init(q: Q):
                 ui.zone('body', size='750px', direction=ui.ZoneDirection.ROW, zones=[
                     ui.zone('movie_genres', size='300px'),
                     ui.zone('movie_history', size='300px'),
-                    ui.zone('llm_response'),
+                    ui.zone('movie_recommendations'),
                 ])
             ]
         )
@@ -83,8 +84,6 @@ async def init(q: Q):
     ))
 
     # Add elements into the page
-    # q.page['suggestions'] = ui.form_card(box='suggestions', items=[])
-    # q.page['trending'] = ui.form_card(box='trending', items=[])
     q.page['movie_genres'] = ui.form_card(
         box='movie_genres',
         items=[
@@ -94,7 +93,6 @@ async def init(q: Q):
                 name='genres',
                 choices=[ui.choice(name=str(x), label=str(x)) for x in get_genres()],
             ),
-            # ui.button(name='submit', label='Generate Recommendations!', primary=True),
         ]
     )
 
@@ -107,20 +105,19 @@ async def init(q: Q):
                 name='movies',
                 choices=[ui.choice(name=str(x), label=str(x)) for x in q.client.all_movies],
             ),
-            # ui.button(name='submit', label='Generate Recommendations!', primary=True),  # Probably should just have 1 button in the whole page
         ]
     )
 
-    q.page['llm_response'] = ui.form_card(
-        box='llm_response',
+    q.page['movie_recommendations'] = ui.form_card(
+        box='movie_recommendations',
         items=[
-            ui.separator('Movie Recommended by LLM'),
-            ui.text(""),  # Init to empty
-            ui.button(name='submit', label='Generate Recommendations!', primary=True),  # Probably should just have 1 button in the whole page
+            ui.separator('Movies Recommended by LLM'),
+            ui.button(name='submit', label='Generate Recommendations!', primary=True),
         ]
     )
 
     q.client.theme = 'default'
+    q.client.recommendations = []
 
 
 def init_data(q: Q):
@@ -128,7 +125,7 @@ def init_data(q: Q):
     q.client.all_genres = get_genres()
 
 
-def query_llm(q: Q):  # TODO: Should query both using genre and movie history. Need some prompt engineering
+def query_llm(q: Q):
     if not q.args.submit:  # Only runs when user presses the submit button
         return
 
@@ -139,31 +136,140 @@ def query_llm(q: Q):  # TODO: Should query both using genre and movie history. N
     if q.args.movies is not None:  # Not None means there's an update
         q.client.movies = q.args.movies
 
+    # Craft the Prompt sent to LLM
     if q.client.genres and q.client.movies:
-        msg = f"I have enjoyed the following genres: {', '.join(q.client.genres)} and watched the following movies: {', '.join(q.client.movies)}. Please recommend me at most 5 good movies based on my taste."  # Prompt sent to LLM
+        msg = f"I have enjoyed the following genres: {', '.join(q.client.genres)} and watched the following movies: {', '.join(q.client.movies)}. Please recommend me at most 5 good movies based on my taste."
     elif q.client.genres:
         msg = f"I have enjoyed the following genres:{', '.join(q.client.genres)}, please recommend me at most 5 good movies of the similar genres."
     elif q.client.movies:
         msg = f"I have watched the following movies:{', '.join(q.client.movies)}, please recommend me at most 5 similar good movies."
     elif not q.client.genres and not q.client.movies:
-        msg = "Please recommend me 5 movies."
+        msg = "Please recommend me 5 good movies."
     else:
-        msg = "Please check your input"
+        print("Something went wrong creating a prompt")
+
+    if q.client.recommendations:  # Some movies are already recommended
+        past_recommendations = "\n\n".join([movie["name"] for movie in q.client.recommendations])
+        msg += f"""
+
+Do not recommend the following movies
+
+{past_recommendations}
+"""
+
+    msg += """
+For every movie recommended, reply in the following format.
+Movie Name: <Name of the Movie>
+Release Year: <Year of Release>
+Description: <A short justification for recommending this movie>
+"""
 
     reply = None
     while not reply:
         try:  # Unstable. API doesn't receive the prompt sometimes so need to retry
             # Create a chat session
             client = H2OGPTE(address=H2OGPTE_URL, api_key=H2OGPTE_API_TOKEN)
-            chat_session_id = client.create_chat_session_on_default_collection()
+            q.client.chat_session_id = client.create_chat_session_on_default_collection()
 
-            with client.connect(chat_session_id) as session:
+            with client.connect(q.client.chat_session_id) as session:
                 print(msg)
                 reply = session.query(
                     message=msg,
-                    timeout=30,  # Might need adjustment
+                    timeout=40,  # Might need adjustment
                 )
+            parse_response(q, reply.content)
+            display_recommendations(q)
         except:
             continue
-        q.page['llm_response'].items[1].text.content = reply.content  # Update text section in the app
 
+
+def parse_response(q, res):
+    """
+    Parse LLM response and updates list of movie recommendations q.client.recommendations
+    res: A string. Response by the LLM
+    recommendations: A list of dicts. Currently recommended movie details
+    """
+    res = res.split("\n")
+    for i, line in enumerate(res):
+        if "Movie Name:" not in line:
+            continue
+        try:
+            movie_name = line.split("Movie Name: ")[-1].strip()
+            if movie_name[0] == '"' and movie_name[-1] == '"':  # Remove quotation marks
+                movie_name = movie_name[1:-1]
+            movie_year = res[i+1].split("Release Year: ")[-1].strip()
+            movie_desc = res[i+2].split("Description: ")[-1].strip()
+            if movie_check(q, movie_name):
+                q.client.recommendations.append(
+                    {"name":movie_name, "year":movie_year, "desc":movie_desc, "discarded":False}
+                )
+        except Exception as e:  # Response cannot be parsed
+            print("Something went wrong when parsing the following portion")
+            print(res[i:i+3])
+            print(e)
+
+
+def movie_check(q, movie_name):
+    """
+    Return True if movie name is valid and has not been recommended or watched.
+    """
+    if movie_name not in q.client.all_movies:  # Deter hallucination
+        return False
+    past_recommendations = [movie["name"] for movie in q.client.recommendations]
+    if movie_name in past_recommendations:  # Already recommended
+        return False
+    if q.client.movies and movie_name in q.client.movies:  # User already watched
+        return False
+
+    return True
+
+
+def display_recommendations(q):
+    """
+    Updates the UI using the list of movie recommendations
+    """
+    displayed_items = [ui.separator('Movie Recommended by LLM'),
+                       ui.button(name='submit', label='Generate Recommendations! (Press Again for More)', primary=True)]
+
+    for i, movie in enumerate(q.client.recommendations):
+        if not movie["discarded"]:
+            displayed_items.append(ui.text(f'**{movie["name"]}**', size=ui.TextSize.L, name=f'name_{i}'))
+            displayed_items.append(ui.text(f'_{movie["year"]}_', name=f'year_{i}'))
+            displayed_items.append(ui.text(f'{movie["desc"]}', name=f'desc_{i}'))
+            displayed_items.append(ui.buttons(justify="center", items=[
+                ui.button(name=f'full_desc_{i}', label='View Full Description'),
+                ui.button(name=f'discard_{i}', label='Discard This Recommendation')
+            ]))
+
+    q.page['movie_recommendations'].items = displayed_items
+
+
+def update_recommendations(q):
+    """
+    Handles user pressing the "View full description" and "Discard" buttons
+    """
+    for i, movie in enumerate(q.client.recommendations):
+        if q.args[f"full_desc_{i}"]:
+            get_full_description(q, i)
+        if q.args[f"discard_{i}"]:
+            q.client.recommendations[i]["discarded"] = True
+    display_recommendations(q)  # Update displayed components
+
+
+def get_full_description(q, movie_index):
+    """
+    Retrieve a longer description of movie using RAG pipeline
+    """
+    reply = None
+    while not reply:
+        try:
+            client = H2OGPTE(address=H2OGPTE_URL, api_key=H2OGPTE_API_TOKEN)
+
+            with client.connect(q.client.chat_session_id) as session:
+                reply = session.query(
+                    message=f'Retrieve the full description for the movie {q.client.recommendations[movie_index]["name"]}',
+                    timeout=20
+                )
+                q.client.recommendations[movie_index]["desc"] = reply.content
+        except:
+            continue
