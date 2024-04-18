@@ -1,25 +1,44 @@
-from h2o_wave import app, Q, ui, on, data, main, copy_expando, run_on
+from h2o_wave import app, Q, ui, on, data, main
 from h2ogpte import H2OGPTE
 
 import pandas as pd
 
-H2OGPTE_URL="https://h2ogpte.genai.h2o.ai"
+H2OGPTE_URL = "https://h2ogpte.genai.h2o.ai"
 try:  # Read API key from local dir
     with open("./API_key.txt", "r") as f:
         H2OGPTE_API_TOKEN = f.read().strip()
 except:
     raise Exception("Please follow the setup and place your API key in ./API_key.txt")
 
-# functions
+
 def get_genres():
+    """
+    Loads genre data from local dataset
+    Returns a list of strings representing the unique movie genres in alphabetical order
+    """
     df = pd.read_json('IMDB_movie_details.json', lines=True)
     genres = list(df['genre'].explode().sort_values().unique())
     return genres
 
+
 def get_movies():
+    """
+    Loads movie names from local dataset
+    Returns a list of strings representing the unique movie names
+    """
     df_movie = pd.read_csv('movies_with_genres.csv')
     movies = list(df_movie['movie_title'].unique())
     return movies
+
+
+def init_data(q: Q):
+    """
+    Run all data loading and processing functions.
+    Store results in session variables
+    """
+    q.client.all_movies = get_movies()
+    q.client.all_genres = get_genres()
+
 
 @app("/")
 async def serve(q: Q):
@@ -44,7 +63,7 @@ async def serve(q: Q):
 
 async def init(q: Q):
     """
-    Set up the User Interface
+    Set up the User Interface and session variables
     """
     q.page['meta'] = ui.meta_card(title='Movie Recomendations', box='', layouts=[  # Different layouts for different window sizes
         ui.layout(
@@ -120,31 +139,30 @@ async def init(q: Q):
     q.client.recommendations = []
 
 
-def init_data(q: Q):
-    q.client.all_movies = get_movies()
-    q.client.all_genres = get_genres()
-
-
 def query_llm(q: Q):
+    """
+    Craft prompt and use it to query the LLM
+    """
     if not q.args.submit:  # Only runs when user presses the submit button
         return
 
     # q.args.xxx is not persistent. Only has value on change.
-    # Create and use q.client.xxx to make it persistent
+    # Create and use q.client.xxx to make favorite genre and movie selections persistent
     if q.args.genres is not None:  # Not None means there's an update
         q.client.genres = q.args.genres  # list of genres selected by user in the 'genres' checklist
     if q.args.movies is not None:  # Not None means there's an update
-        q.client.movies = q.args.movies
+        q.client.movies = q.args.movies  # list of movies selected by user in the 'movies' picker
 
     # Craft the Prompt sent to LLM
+    msg = ""
     if q.client.genres and q.client.movies:
-        msg = f"I have enjoyed the following genres: {', '.join(q.client.genres)} and watched the following movies: {', '.join(q.client.movies)}. Please recommend me at most 5 good movies based on my taste."
+        msg = f"I have enjoyed the following genres: {', '.join(q.client.genres)} and watched the following movies: {', '.join(q.client.movies)}. From the document, Please recommend me at most 5 good movies based on my taste."
     elif q.client.genres:
-        msg = f"I have enjoyed the following genres:{', '.join(q.client.genres)}, please recommend me at most 5 good movies of the similar genres."
+        msg = f"I have enjoyed the following genres:{', '.join(q.client.genres)}. From the document, please recommend me at most 5 good movies of the similar genres."
     elif q.client.movies:
-        msg = f"I have watched the following movies:{', '.join(q.client.movies)}, please recommend me at most 5 similar good movies."
+        msg = f"I have watched the following movies:{', '.join(q.client.movies)}. From the document, please recommend me at most 5 similar good movies using descriptions."
     elif not q.client.genres and not q.client.movies:
-        msg = "Please recommend me 5 good movies."
+        msg = "From the document, please recommend me 5 good movies."
     else:
         print("Something went wrong creating a prompt")
 
@@ -156,8 +174,9 @@ Do not recommend the following movies
 
 {past_recommendations}
 """
-
+    # Specify reply format
     msg += """
+
 For every movie recommended, reply in the following format.
 Movie Name: <Name of the Movie>
 Release Year: <Year of Release>
@@ -172,13 +191,13 @@ Description: <A short justification for recommending this movie>
             q.client.chat_session_id = client.create_chat_session_on_default_collection()
 
             with client.connect(q.client.chat_session_id) as session:
-                print(msg)
+                print(msg)  # Prompt sent is printed in terminal
                 reply = session.query(
                     message=msg,
                     timeout=40,  # Might need adjustment
                 )
-            parse_response(q, reply.content)
-            display_recommendations(q)
+            parse_response(q, reply.content)  # Parse LLM response
+            display_recommendations(q)  # Display parsed response
         except:
             continue
 
